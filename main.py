@@ -1,5 +1,6 @@
 import os
 import cv2
+import numpy as np
 import pyocr
 from pathlib import Path
 from PIL import Image, ImageEnhance
@@ -10,36 +11,63 @@ TESSDATA_PATH = r"C:\Program Files\Tesseract-OCR\tessdata"
 os.environ["PATH"] += os.pathsep + TESSERACT_PATH
 os.environ["TESSDATA_PREFIX"] = TESSDATA_PATH
 
-TARGET_IMAGE_PATH = "input/test1.jpg"
+
+def enhance_contrast(img: Image, factor: float = 2.0) -> Image:
+    enhancer = ImageEnhance.Contrast(img)
+    img_enhanced = enhancer.enhance(factor)
+    return img_enhanced
 
 
-tool: pyocr.tesseract = pyocr.get_available_tools()[0]
+def get_contours(img: Image):
+    cvimg_gray = np.array(img, dtype=np.uint8)
+    assert(cvimg_gray.ndim == 2)
 
-builder = pyocr.builders.TextBuilder(tesseract_layout=6)
+    _, cvimg_binary = cv2.threshold(cvimg_gray, 150, 255, cv2.THRESH_BINARY)
+    cv2.imwrite("output/opencv_binary.png", cvimg_binary)
 
-img = Image.open(TARGET_IMAGE_PATH)
-img_g = img.convert('L')
-enhancer = ImageEnhance.Contrast(img_g)
-img_con = enhancer.enhance(2.0)
+    contours, hierarchy = cv2.findContours(
+        cvimg_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-#txt_pyocr = tools[0].image_to_string(img_con, lang='jpn', builder=builder)
-#print(txt_pyocr)
+    cvimg_blank = np.ones_like(cvimg_gray) * 255
+    cv2.drawContours(cvimg_blank, contours, -1, (0,0,0), 3)
+    cv2.imwrite("output/opencv_contours.png", cvimg_blank)
 
-txt = tool.image_to_string(
-    img_g,
-    lang='jpn+eng',
-    builder=pyocr.builders.TextBuilder(tesseract_layout=6)
-)
-print(txt)
-Path("result.txt").write_text(txt, encoding="utf-8-sig")
 
-word_boxes = tool.image_to_string(
-    img_g,
-    lang='jpn+eng',
-    builder=pyocr.builders.WordBoxBuilder(tesseract_layout=6)
-)
+def main():
+    INPUT_DIR = Path("input")
+    TARGET_IMAGE_PATH = "input/test1.jpg"
 
-cvimg = cv2.imread(TARGET_IMAGE_PATH)
-for box in word_boxes:
-    cv2.rectangle(cvimg, box.position[0], box.position[1], (255, 0, 0), 1)
-cv2.imwrite('view.png', cvimg)
+    tool: pyocr.tesseract = pyocr.get_available_tools()[0]
+
+    # 7. Treat the image as a single text line.
+    builder = pyocr.builders.TextBuilder(tesseract_layout=7)
+
+    os.makedirs("output", exist_ok=True)
+
+    for file in INPUT_DIR.glob("*.jpg"):
+        print(file)
+        img = Image.open(file)
+        img_gray = img.convert('L')
+        img_address = img_gray.crop((0, 170, 1080, 310))
+        img_kokudaka = img_gray.crop((0, 1400, 1080, 1580))
+
+        img_address_contrast = enhance_contrast(img_address, 2.0)
+        img_kokudaka_contrast = enhance_contrast(img_kokudaka, 2.0)
+
+        img_address.save("output/address.png")
+        img_kokudaka.save("output/kokudaka.png")
+        img_address_contrast.save("output/address_contrast.png")
+        img_kokudaka_contrast.save("output/kokudaka_contrast.png")
+
+        get_contours(img_address_contrast)
+        get_contours(img_kokudaka_contrast)
+
+        text_address = tool.image_to_string(img_address_contrast, lang='jpn', builder=builder)
+        text_kokudaka = tool.image_to_string(img_kokudaka_contrast, lang='jpn', builder=builder)
+        print(f"{text_address=}")
+        print(f"{text_kokudaka=}")
+        #break
+
+
+if __name__ == "__main__":
+    main()
